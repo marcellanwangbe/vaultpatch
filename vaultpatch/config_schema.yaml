@@ -1,0 +1,20 @@
+# vaultpatch configuration schema (example / default values)
+# Copy this file to vaultpatch.yaml and adjust as needed.
+
+# Vault server address
+vault_addr: "http://127.0.0.1:8200"
+
+# Vault token (prefer VAULT_TOKEN env var instead of storing here)
+# vault_token: "s.XXXXXXXXXXXX"
+
+# Vault namespace (Enterprise only; use 'root' for OSS)
+namespace: "root"
+
+# KV mount path
+mount_path: "secret"
+
+# When true, no writes are performed — only a diff preview is shown
+dry_run: false
+
+# Path to the audit log file
+audit_log: "vaultpatch_audit.log"
