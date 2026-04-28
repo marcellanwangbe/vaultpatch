@@ -34,6 +34,12 @@ vaultpatch rotate --namespace prod/payments --secret db/password --new-value "s3
 vaultpatch rotate --namespace prod/payments --secret db/password --new-value "s3cr3t!"
 ```
 
+**Rotate multiple secrets from a file:**
+
+```bash
+vaultpatch rotate --namespace prod/payments --from-file secrets.yaml --dry-run
+```
+
 **Audit recent changes across namespaces:**
 
 ```bash
