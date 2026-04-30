@@ -46,6 +46,19 @@ def test_export_summary_string(mock_client):
     assert "0 errors" in report.summary()
 
 
+def test_export_mixed_success_and_errors(mock_client):
+    """Ensure summary reflects partial failures when some paths error out."""
+    client = MagicMock()
+    client.read_secret.side_effect = lambda path: (
+        {"user": "alice"} if path == "secret/a" else (_ for _ in ()).throw(RuntimeError("denied"))
+    )
+    report = export_secrets(client, ["secret/a", "secret/bad"])
+    assert report.success_count == 1
+    assert report.error_count == 1
+    assert "secret/bad" in report.errors
+    assert "1/2" in report.summary()
+
+
 def test_render_json(mock_client):
     report = export_secrets(mock_client, ["secret/a"], mask=False)
     rendered = render_export(report, "json")
