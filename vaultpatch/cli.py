@@ -1,159 +1,93 @@
-"""CLI entry point for vaultpatch.
-
-Provides commands for previewing and applying secret rotations
-across HashiCorp Vault namespaces.
-"""
-
-import sys
-import json
-from pathlib import Path
-from typing import Optional
+"""Main CLI entry-point for vaultpatch."""
+from __future__ import annotations
 
 import click
 
-from vaultpatch.config import VaultConfig, from_file, from_env
 from vaultpatch.client import VaultClient, VaultClientError
-from vaultpatch.rotator import SecretRotator
+from vaultpatch.config import VaultConfig, from_env
 from vaultpatch.diff import compute_diff
+from vaultpatch.rotator import SecretRotator
+from vaultpatch.cli_audit import audit_cmd
+from vaultpatch.cli_namespace import namespace_cmd
+from vaultpatch.cli_policy import policy_cmd
+from vaultpatch.cli_snapshot import snapshot_cmd
+from vaultpatch.cli_export import export_cmd
+from vaultpatch.cli_watch import watch_cmd
+from vaultpatch.cli_clone import clone_cmd
+from vaultpatch.cli_lock import lock_cmd
 
 
 @click.group()
-@click.version_option(prog_name="vaultpatch")
-@click.option(
-    "--config",
-    "-c",
-    type=click.Path(exists=False, path_type=Path),
-    default=None,
-    help="Path to vaultpatch config file (YAML). Falls back to environment variables.",
-)
-@click.pass_context
-def cli(ctx: click.Context, config: Optional[Path]) -> None:
-    """vaultpatch — rotate and audit secrets across Vault namespaces."""
-    ctx.ensure_object(dict)
-
-    try:
-        if config is not None:
-            cfg = from_file(config)
-        else:
-            cfg = from_env()
-    except (FileNotFoundError, KeyError, ValueError) as exc:
-        raise click.ClickException(f"Configuration error: {exc}") from exc
-
-    ctx.obj["config"] = cfg
+def cli():
+    """vaultpatch — rotate and audit Vault secrets safely."""
 
 
 @cli.command("diff")
 @click.argument("path")
-@click.argument("patch_file", type=click.Path(exists=True, path_type=Path))
-@click.option("--namespace", "-n", default=None, help="Override Vault namespace.")
-@click.pass_context
-def diff_cmd(ctx: click.Context, path: str, patch_file: Path, namespace: Optional[str]) -> None:
-    """Preview changes between current secret at PATH and PATCH_FILE (JSON).
+@click.option("--token", envvar="VAULT_TOKEN", required=True)
+@click.option("--addr", envvar="VAULT_ADDR", default="http://127.0.0.1:8200")
+@click.option("--new-values", "-n", multiple=True, help="key=value pairs for proposed secrets.")
+def diff_cmd(path, token, addr, new_values):
+    """Preview changes for a secret path without applying them."""
+    proposed: dict = {}
+    for kv in new_values:
+        if "=" not in kv:
+            raise click.BadParameter(f"Expected key=value, got: {kv}")
+        k, v = kv.split("=", 1)
+        proposed[k] = v
 
-    PATH is the Vault secret path, e.g. secret/data/myapp/config.
-    PATCH_FILE is a JSON file containing the desired key/value pairs.
-    """
-    cfg: VaultConfig = ctx.obj["config"]
-    if namespace:
-        cfg = VaultConfig(
-            address=cfg.address,
-            token=cfg.token,
-            namespace=namespace,
-            extra=cfg.extra,
-        )
-
+    client = VaultClient(addr=addr, token=token)
     try:
-        patch_data: dict = json.loads(patch_file.read_text())
-    except (json.JSONDecodeError, OSError) as exc:
-        raise click.ClickException(f"Failed to read patch file: {exc}") from exc
-
-    try:
-        client = VaultClient(cfg)
-        if not client.is_authenticated():
-            raise click.ClickException("Vault authentication failed. Check your token.")
         current = client.read_secret(path) or {}
     except VaultClientError as exc:
         raise click.ClickException(str(exc)) from exc
 
-    secret_diff = compute_diff(path, current, patch_data)
-
-    if not secret_diff.has_changes():
-        click.echo(click.style("No changes detected.", fg="green"))
+    diff = compute_diff(path, current, proposed)
+    if not diff.has_changes():
+        click.echo("No changes detected.")
         return
-
-    click.echo(click.style(f"Diff for '{path}':", bold=True))
-    for line in secret_diff.summary().splitlines():
-        if line.startswith("+"):
-            click.echo(click.style(line, fg="green"))
-        elif line.startswith("-"):
-            click.echo(click.style(line, fg="red"))
-        else:
-            click.echo(line)
+    click.echo(diff.summary())
 
 
 @cli.command("rotate")
 @click.argument("path")
-@click.argument("patch_file", type=click.Path(exists=True, path_type=Path))
-@click.option("--dry-run", is_flag=True, default=False, help="Preview changes without writing.")
-@click.option("--namespace", "-n", default=None, help="Override Vault namespace.")
-@click.pass_context
-def rotate_cmd(
-    ctx: click.Context,
-    path: str,
-    patch_file: Path,
-    dry_run: bool,
-    namespace: Optional[str],
-) -> None:
-    """Rotate the secret at PATH using values from PATCH_FILE (JSON).
+@click.option("--token", envvar="VAULT_TOKEN", required=True)
+@click.option("--addr", envvar="VAULT_ADDR", default="http://127.0.0.1:8200")
+@click.option("--new-values", "-n", multiple=True, help="key=value pairs to write.")
+@click.option("--dry-run", is_flag=True, default=False)
+def rotate_cmd(path, token, addr, new_values, dry_run):
+    """Rotate secrets at PATH."""
+    proposed: dict = {}
+    for kv in new_values:
+        if "=" not in kv:
+            raise click.BadParameter(f"Expected key=value, got: {kv}")
+        k, v = kv.split("=", 1)
+        proposed[k] = v
 
-    Use --dry-run to preview without applying changes.
-    """
-    cfg: VaultConfig = ctx.obj["config"]
-    if namespace:
-        cfg = VaultConfig(
-            address=cfg.address,
-            token=cfg.token,
-            namespace=namespace,
-            extra=cfg.extra,
-        )
-
+    client = VaultClient(addr=addr, token=token)
+    rotator = SecretRotator(client=client, dry_run=dry_run)
     try:
-        patch_data: dict = json.loads(patch_file.read_text())
-    except (json.JSONDecodeError, OSError) as exc:
-        raise click.ClickException(f"Failed to read patch file: {exc}") from exc
-
-    try:
-        client = VaultClient(cfg)
-        if not client.is_authenticated():
-            raise click.ClickException("Vault authentication failed. Check your token.")
+        result = rotator.rotate(path, proposed)
     except VaultClientError as exc:
         raise click.ClickException(str(exc)) from exc
 
-    rotator = SecretRotator(client)
-    result = rotator.rotate(path, patch_data, dry_run=dry_run)
-
-    if dry_run:
-        click.echo(click.style("[dry-run] ", fg="yellow", bold=True), nl=False)
-
-    click.echo(repr(result))
-
-    if result.diff and result.diff.has_changes():
-        for line in result.diff.summary().splitlines():
-            if line.startswith("+"):
-                click.echo(click.style(line, fg="green"))
-            elif line.startswith("-"):
-                click.echo(click.style(line, fg="red"))
-            else:
-                click.echo(line)
+    status = "[DRY RUN] " if dry_run else ""
+    if result.skipped:
+        click.echo(f"{status}No changes for {path}.")
     else:
-        click.echo(click.style("No changes.", fg="green"))
-
-    sys.exit(0)
+        click.echo(f"{status}Rotated {path}: {result.diff.summary()}")
 
 
-def main() -> None:
-    """Package entry point."""
-    cli(obj={})
+def main():
+    cli.add_command(audit_cmd, name="audit")
+    cli.add_command(namespace_cmd, name="namespace")
+    cli.add_command(policy_cmd, name="policy")
+    cli.add_command(snapshot_cmd, name="snapshot")
+    cli.add_command(export_cmd, name="export")
+    cli.add_command(watch_cmd, name="watch")
+    cli.add_command(clone_cmd, name="clone")
+    cli.add_command(lock_cmd, name="lock")
+    cli()
 
 
 if __name__ == "__main__":
