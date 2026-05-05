@@ -97,3 +97,12 @@ def test_verify_report_summary(mock_client):
     assert "1 passed" in summary
     assert "1 failed" in summary
     assert "2 checks" in summary
+
+
+def test_verify_empty_expected_keys(mock_client):
+    """Verifying with no expected keys should produce an empty, passing report."""
+    report = verify_secrets(mock_client, "secret/app", {})
+    assert report.all_passed()
+    assert report.passed_count == 0
+    assert report.failed_count == 0
+    assert report.results == []
