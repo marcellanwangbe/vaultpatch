@@ -89,11 +89,12 @@ def test_check_expiry_multiple_paths(mock_client):
 
 
 def test_expire_report_summary():
-    report = ExpireReport(results=[
-        ExpireResult(path="a", age_days=10, ttl_days=90, expired=False),
-        ExpireResult(path="b", age_days=100, ttl_days=90, expired=True),
-        ExpireResult(path="c", age_days=None, ttl_days=90, expired=False, error="oops"),
-    ])
-    s = report.summary()
-    assert "1/3" in s
-    assert "1 error" in s
+    results = [
+        ExpireResult(path="a", age_days=10, expired=False, ok=True, error=None),
+        ExpireResult(path="b", age_days=120, expired=True, ok=True, error=None),
+        ExpireResult(path="c", age_days=None, expired=False, ok=False, error="timeout"),
+    ]
+    report = ExpireReport(results=results)
+    assert report.expired_count == 1
+    assert report.error_count == 1
+    assert len(report.results) == 3
