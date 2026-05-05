@@ -41,6 +41,15 @@ def check_cmd(
     namespace: str,
 ) -> None:
     """Check one or more secret paths for lint violations."""
+    # Validate that any explicitly requested rules actually exist.
+    unknown_rules = [r for r in rules if r not in _RULES]
+    if unknown_rules:
+        raise click.BadParameter(
+            f"Unknown rule(s): {', '.join(unknown_rules)}. "
+            f"Run 'vaultpatch lint rules' to see available rules.",
+            param_hint="'--rule'",
+        )
+
     cfg = VaultConfig(url=url, token=token, namespace=namespace)
     client = VaultClient(cfg)
 
