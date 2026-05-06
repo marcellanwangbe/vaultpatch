@@ -52,6 +52,10 @@ class PinReport:
     def summary(self) -> str:
         return f"{self.passed_count} pinned OK, {self.failed_count} mismatched"
 
+    def failed_results(self) -> List[PinResult]:
+        """Return only the results that did not pass verification."""
+        return [r for r in self.results if not r.ok]
+
 
 def _fingerprint(data: dict) -> str:
     canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
@@ -59,6 +63,7 @@ def _fingerprint(data: dict) -> str:
 
 
 def create_pin(client: VaultClient, path: str) -> PinEntry:
+    """Read the secret at *path* and return a PinEntry capturing its current state."""
     data = client.read_secret(path)
     version = data.get("metadata", {}).get("version") if isinstance(data.get("metadata"), dict) else None
     secrets = {k: v for k, v in data.items() if k != "metadata"}
@@ -66,15 +71,18 @@ def create_pin(client: VaultClient, path: str) -> PinEntry:
 
 
 def save_pins(pins: List[PinEntry], dest: Path) -> None:
+    """Serialise *pins* to *dest* as a JSON file, creating parent directories as needed."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps([p.to_dict() for p in pins], indent=2))
 
 
 def load_pins(src: Path) -> List[PinEntry]:
+    """Deserialise PinEntry objects from the JSON file at *src*."""
     return [PinEntry.from_dict(d) for d in json.loads(src.read_text())]
 
 
 def verify_pins(client: VaultClient, pins: List[PinEntry]) -> PinReport:
+    """Verify each pin against the live secret and return a PinReport."""
     report = PinReport()
     for pin in pins:
         try:
